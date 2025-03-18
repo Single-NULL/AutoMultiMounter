@@ -10,3 +10,5 @@ Auto multi mounting script. Very buggy, moet nog veel testen. En bug fixen voord
 
 # Broken
 Raid assembling
+
+Auto cleaning naar mounten/assembling. Of bij een error tijdens process, moet ook nog gefixt worden.
