@@ -1,10 +1,10 @@
 #!/bin/bash
 # forensic_mount_dynamic_robust.sh
 
-if [ "$EUID" -ne 0 ]
-  then echo "Please run as root"
-  exit
-fi
+# if [ "$EUID" -ne 0 ]
+#  then echo "Please run as root"
+ # exit
+#fi
 
 #
 # Beschrijving:
@@ -286,28 +286,69 @@ mount_single_image() {
 #   $1: RAID mount-directory
 #   $2...$n: lijst met loop devices
 #####################################
+#####################################
+# Functie: Assembleer een RAID-array uit meerdere loop devices en mount deze read-only.
+#
+# Argumenten:
+#   $1: RAID mount-directory
+#   $2...$n: lijst met loop devices
+#####################################
 assemble_raid() {
     local raid_mount="$1"
     shift
     local loop_devices=("$@")
 
     if [ "${#loop_devices[@]}" -lt 2 ]; then
-         echo "[ERROR] Minstens twee loop devices zijn vereist voor RAID-assemblering." >&2
-         exit 1
+        echo "[ERROR] Minstens twee loop devices zijn vereist voor RAID-assemblering." >&2
+        exit 1
     fi
 
-    echo "[INFO] Creëren van RAID mount-directory: $raid_mount"
-    mkdir -p "$raid_mount" || { echo "[ERROR] Kan $raid_mount niet aanmaken." >&2; exit 1; }
-    GLOBAL_MOUNT_DIRS+=("$raid_mount")
+    # Dynamisch de RAID mount-directory aanmaken op basis van de basenamen van de images
+    local raid_mount_base="${raid_mount:-"/mnt/raid"}"
+    local raid_mount_dir="${raid_mount_base}_$(IFS=_; echo "${BASE_NAMES[*]}")"
+
+    echo "[INFO] Creëren van RAID mount-directory: $raid_mount_dir"
+    mkdir -p "$raid_mount_dir" || { echo "[ERROR] Kan $raid_mount_dir niet aanmaken." >&2; exit 1; }
+    GLOBAL_MOUNT_DIRS+=("$raid_mount_dir")
+
+    # Assembleren van de RAID-array met mdadm, gebruikt een dynamische naam voor de RAID-device
+    local raid_device="${RAID_DEVICE:-/dev/md0}"
 
     echo "[INFO] Assembleren van RAID-array met mdadm"
-    sudo mdadm --assemble --run "$RAID_DEVICE" "${loop_devices[@]}" || { echo "[ERROR] RAID-assembleren mislukt." >&2; exit 1; }
-    echo "[INFO] RAID-array $RAID_DEVICE succesvol geassembleerd. Huidige status:"
-    cat /proc/mdstat || { echo "[ERROR] Kan RAID-status niet uitlezen." >&2; exit 1; }
+    if ! sudo /sbin/mdadm --assemble --run "$raid_device" "${loop_devices[@]}"; then
+        echo "[ERROR] RAID-assembleren mislukt bij het uitvoeren van mdadm --assemble." >&2
+        RAID_ASSEMBLE_FAILED=true
+    else
+        echo "[INFO] RAID-array $raid_device succesvol geassembleerd. Huidige status:"
+        cat /proc/mdstat || { echo "[ERROR] Kan RAID-status niet uitlezen." >&2; exit 1; }
+    fi
 
-    echo "[INFO] Mounten van RAID-array $RAID_DEVICE als read-only naar '$raid_mount'"
-    sudo mount -o ro "$RAID_DEVICE" "$raid_mount" || { echo "[ERROR] Mounten van RAID-array mislukt." >&2; exit 1; }
+    # Probeer de RAID-array opnieuw samen te stellen met --scan, als de eerste poging faalde
+    echo "[INFO] Proberen om RAID te assembleren met --scan (ook als de eerste poging mislukt is)"
+    if ! sudo /sbin/mdadm --assemble --scan; then
+        echo "[ERROR] RAID assembleren via --scan mislukt." >&2
+        exit 1
+    fi
+
+    # Mounten van de RAID-array naar de dynamisch aangemaakte mount-directory
+    echo "[INFO] Mounten van RAID-array $raid_device als read-only naar '$raid_mount_dir'"
+    if ! sudo mount -o ro "$raid_device" "$raid_mount_dir"; then
+        echo "[ERROR] Mounten van RAID-array mislukt." >&2
+        exit 1
+    fi
+
+    # Toon waar de array gemount is
+    echo "[INFO] RAID-array succesvol gemount op $raid_mount_dir"
 }
+
+
+
+
+
+
+
+
+
 
 #####################################
 # Parameterverwerking
